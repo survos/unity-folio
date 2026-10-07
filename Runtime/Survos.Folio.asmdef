@@ -1,0 +1,12 @@
+{
+    "name": "Survos.Folio",
+    "rootNamespace": "Survos.Folio",
+    "references": [
+        "Survos.Sqlite"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "autoReferenced": true,
+    "noEngineReferences": false
+}
