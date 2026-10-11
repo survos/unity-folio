@@ -52,35 +52,34 @@ without them the first-page join on fpus takes 30 s instead of 70 ms.
 ## Platforms
 
 - **macOS ARM64, Windows x64, Editor:** native SQLite via com.survos.sqlite.
-- **Web:** not yet. `FolioDatabase.IsSupported` is false; an app should fall back to the
-  WallCard API (MuseumBrowser does). The plan is below.
+- **Web (WebGL):** sqlite-wasm, through `Runtime/Web/FolioSqlite.jslib`. Verified in a Unity
+  6000.6 Web build (headless Chrome) on `curatescape/baltimore` from recordia.org.
 
-## Web backend (planned): a jslib gluing sqlite-wasm to C#
+## Web backend: a jslib gluing sqlite-wasm to C#
 
-The browser side is what rutado already does (`assets/lib/folio-reader.js`): fetch the
-`.folio.gz`, gunzip, `sqlite3_deserialize` it into an in-memory sqlite-wasm database,
-keep the archive in the Cache API. The Unity side needs a thin bridge:
+The browser side is what rutado does (`assets/lib/folio-reader.js`): fetch the `.folio.gz`,
+gunzip, `sqlite3_deserialize` into an in-memory sqlite-wasm database.
 
-- `Runtime/Plugins/WebGL/SurvosFolio.jslib`, with a `$SurvosFolio` state object
-  (`autoAddDeps`) holding open databases by handle.
-  - `SurvosFolio_Open(url, version) -> handle`: starts the download asynchronously;
-    loads sqlite-wasm with a dynamic `import()` of
-    `https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.53.4-build2/dist/index.mjs`
-    (`locateFile` → `dist/sqlite3.wasm`), or from a URL the page provides; gunzips with
-    `DecompressionStream('gzip')` (no fflate needed); caches by url + version.
-  - `SurvosFolio_State(handle) -> int` (0 pending, 1 open, -1 failed),
-    `SurvosFolio_Progress(handle) -> float`, `SurvosFolio_Error(handle) -> string`.
-    C# polls these once a frame from an `Awaitable`, so no `SendMessage` callbacks.
-  - `SurvosFolio_Query(handle, sql, argsJson) -> string`: synchronous (sqlite-wasm's oo1
-    API is synchronous on the main thread); returns `{"columns":[…],"rows":[[…]]}`,
-    BLOBs as base64. Allocate the result with `_malloc` + `stringToUTF8`; IL2CPP frees it.
-  - `SurvosFolio_Close(handle)`.
-- `Runtime/Web/WebFolioDatabase.cs` under `#if UNITY_WEBGL && !UNITY_EDITOR`, implementing
-  `IFolioDatabase` over those calls and registering in `FolioDatabase.Opener`, the same
-  way the native backend does. `FolioReader` and everything above it stay unchanged.
+- `Runtime/Web/FolioSqlite.jslib` (`$FolioSqliteState` holds open databases by handle):
+  - `FolioSqlite_Open(url, request, callback)`: loads sqlite-wasm on first use with a dynamic
+    `import()` of `https://cdn.jsdelivr.net/npm/@sqlite.org/sqlite-wasm@3.53.4-build2/dist/index.mjs`
+    (`locateFile` → `dist/sqlite3.wasm`); fetches the folio, gunzips it with
+    `DecompressionStream('gzip')` when it starts with the gzip magic, rewrites a WAL-mode header to
+    rollback journal (a WAL header makes `sqlite3_deserialize` fail on the first query), and calls
+    back with a handle (-1 on failure; `FolioSqlite_LastError()` says why).
+  - `FolioSqlite_Query(handle, sql, argsJson) -> string`: synchronous; returns
+    `{"columns":[…],"rows":[[…]]}` (BLOBs base64) or `{"error":"…"}`.
+  - `FolioSqlite_Close(handle)`.
+- `Runtime/Web/WebFolioDatabase.cs` (`#if UNITY_WEBGL && !UNITY_EDITOR`) implements
+  `IFolioDatabase` over those calls and registers in `FolioDatabase.Opener`. On the Web the
+  "path" is a URL: `FolioReader.OpenAsync(entry)` opens `entry.DownloadUrl` directly (no
+  `FolioArchive` copy; the browser's HTTP cache keeps it), and `OpenFileAsync(url)` works too.
 - Indexes: the in-memory copy is writable, so `FolioReader`'s prepare step works as is.
+- CORS: the folio URL must allow the page's origin (recordia.org's `/folio/` routes do for
+  `*.survos.com` and localhost; zm's config also allows `*`, once deployed).
 - Memory: fpus is 18 MB gzipped, 141 MB as SQLite, all of it in the wasm heap. Fine on
   desktop browsers; for big folios a server-side trimmed "app" build would be kinder.
+- Not yet: the Cache API (offline), download progress.
 
 ## Notes for maintainers
 
