@@ -52,10 +52,18 @@ namespace Survos.Folio
         FolioReader(IFolioDatabase db) => Database = db;
 
         /// Download (or reuse the cached copy of) a published folio and open it.
+        /// On the Web the browser fetches it (and its HTTP cache keeps it); nothing is written to disk.
         public static async Awaitable<FolioReader> OpenAsync(FolioCatalogEntry entry, IProgress<float> progress = null)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            progress?.Report(0f);
+            var reader = await OpenFileAsync(entry.DownloadUrl, prepare: true);
+            progress?.Report(1f);
+            return reader;
+#else
             var path = await FolioArchive.FetchAsync(entry, progress);
             return await OpenFileAsync(path, prepare: true);
+#endif
         }
 
         /// prepare: add the indexes this class relies on (published builds are compact and
